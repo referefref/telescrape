@@ -38,6 +38,9 @@ case $OS in
     ;;
 esac
 
+# make temp folder for attachments
+mkdir ./temp
+
 # Navigate to the puppeteer_scraper directory and install Node modules
 cd ./pupeteer_scraper || exit
 npm install
