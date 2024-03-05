@@ -36,9 +36,11 @@ type PostData struct {
 }
 
 type TeleScraper struct {
-	postURL  string
-	postData PostData
-	headers  map[string]string
+	postURL   string
+	postData  PostData
+	headers   map[string]string
+	//DebugMode bool
+	OutputFile string
 }
 
 func NewTeleScraper(url string) *TeleScraper {
@@ -74,37 +76,60 @@ func (ts *TeleScraper) fetchAndProcessPost() {
 	}
 
 	ts.postData.Author = additionalData.Author
-	ts.postData.Content = mainData.Description
 	ts.postData.DateTime = additionalData.Datetime
+	ts.postData.Content = mainData.Description
+	ts.postData.Attachments = append(ts.postData.Attachments, Attachment{URL: mainData.Image})
 
-	ts.postData.Attachments = append(ts.postData.Attachments, Attachment{
-		URL: mainData.Image,
-	})
+	combinedLinks := append(mainData.Links, additionalData.Links...)
+	ts.postData.Links = filterAndProcessLinks(combinedLinks)
 
-	ts.postData.Links = filterAndProcessLinks(ts.postData.Links)
 	ts.promptForMediaDownload()
-	ts.savePostDetails()
+
+	//if ts.DebugMode {
+		//ts.printDebugInfo()
+	//} else {
+	//	ts.handleOutput()
+	//}
+
 	fmt.Println("Finished processing URL.")
 }
 
+func (ts *TeleScraper) printDebugInfo() {
+    fmt.Println("Debug Information:")
+    jsonData, _ := json.MarshalIndent(ts.postData, "", "  ")
+    fmt.Println(string(jsonData))
+}
+
+func (ts *TeleScraper) handleOutput() {
+    if ts.OutputFile != "" {
+        ts.savePostDetailsToFile(ts.OutputFile)
+    } else {
+        ts.printPostDetailsToStdout()
+    }
+}
+
 func (ts *TeleScraper) promptForMediaDownload() {
-    fmt.Println("Starting media download...")
-    ts.downloadMedia()
-    fmt.Println("Media download completed.")
+	fmt.Println("Starting media download...")
+	ts.downloadMedia()
+	fmt.Println("Media download completed.")
 }
 
 func filterAndProcessLinks(links []string) []string {
-    var processedLinks []string
-    for _, link := range links {
-        if link != "" && !strings.Contains(link, "telegram.org") && !strings.Contains(link, "tg://resolve") {
-            processedLinks = append(processedLinks, link)
-        }
-    }
-    return processedLinks
+	var processedLinks []string
+	for _, link := range links {
+		if link != "" && !strings.Contains(link, "telegram.org") && !strings.Contains(link, "tg://resolve") {
+			processedLinks = append(processedLinks, link)
+		}
+	}
+	return processedLinks
 }
 
 func (ts *TeleScraper) callScraper(url string, data interface{}) error {
-	cmd := exec.Command("node", "./pupeteer_scraper/scraper.js", url, "./pupeteer_scraper/cookie.txt")
+	args := []string{"node", "./pupeteer_scraper/scraper.js", url, "./pupeteer_scraper/cookie.txt"}
+	//if ts.DebugMode {
+	//	args = append(args, "--debug")
+	//}
+	cmd := exec.Command(args[0], args[1:]...)
 	output, err := cmd.Output()
 	if err != nil {
 		return fmt.Errorf("failed to execute script: %v", err)
@@ -145,7 +170,7 @@ func (ts *TeleScraper) downloadMedia() {
 		hasher.Write([]byte(attachment.URL))
 		hash := hex.EncodeToString(hasher.Sum(nil))
 		timestamp := time.Now().Format("20060102150405")
-		uniqueFilename := fmt.Sprintf("%s_%s", timestamp, hash[:8]) + ".jpg" 
+		uniqueFilename := fmt.Sprintf("%s_%s", timestamp, hash[:8]) + ".jpg"
 
 		filePath, err := downloadFile(attachment.URL, uniqueFilename)
 		if err != nil {
@@ -212,20 +237,28 @@ func calculateFileHash(filePath string) (string, error) {
 	return hex.EncodeToString(hash.Sum(nil)), nil
 }
 
-func (ts *TeleScraper) savePostDetails() {
+func (ts *TeleScraper) savePostDetailsToFile(filename string) {
 	jsonData, err := json.MarshalIndent(ts.postData, "", "  ")
 	if err != nil {
 		color.Red("Failed to marshal post details: %v", err)
 		return
 	}
 
-	filename := "post_details.json"
 	err = ioutil.WriteFile(filename, jsonData, 0644)
 	if err != nil {
 		color.Red("Failed to write post details to file: %v", err)
 		return
 	}
 	color.Green("Post details saved to %s", filename)
+}
+
+func (ts *TeleScraper) printPostDetailsToStdout() {
+	jsonData, err := json.MarshalIndent(ts.postData, "", "  ")
+	if err != nil {
+		color.Red("Failed to marshal post details: %v", err)
+		return
+	}
+	fmt.Println(string(jsonData))
 }
 
 func htmlToText(html string) string {
@@ -235,14 +268,18 @@ func htmlToText(html string) string {
 }
 
 func getFilenameFromURL(url string) string {
-    segments := strings.Split(url, "/")
-	    filename := segments[len(segments)-1]
-    return filename
+	segments := strings.Split(url, "/")
+	filename := segments[len(segments)-1]
+	return filename
 }
 
 func main() {
-	var target string
+	var target, outputFile string
+	//var debugMode bool
+
 	flag.StringVar(&target, "t", "", "Telegram post URL")
+	flag.StringVar(&outputFile, "o", "", "Output file path (optional, defaults to stdout if not provided)")
+	//flag.BoolVar(&debugMode, "debug", false, "Enable debug mode to print full page content to stdout")
 	flag.Parse()
 
 	if target == "" {
@@ -251,5 +288,7 @@ func main() {
 	}
 
 	scraper := NewTeleScraper(target)
+	//scraper.DebugMode = debugMode
+	scraper.OutputFile = outputFile
 	scraper.fetchAndProcessPost()
 }
